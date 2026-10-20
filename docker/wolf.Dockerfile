@@ -65,8 +65,8 @@ RUN --mount=type=cache,target=/cache/ccache \
     -DBUILD_FAKE_UDEV_CLI=ON \
     -DBUILD_TESTING=OFF \
     -G Ninja && \
-    ninja -C $CMAKE_BUILD_DIR wolf && \
-    ninja -C $CMAKE_BUILD_DIR fake-udev && \
+    ninja -j6 -C $CMAKE_BUILD_DIR wolf && \
+    ninja -j6 -C $CMAKE_BUILD_DIR fake-udev && \
     # We have to copy out the built executables because this will only be available inside the buildkit cache
     cp $CMAKE_BUILD_DIR/src/moonlight-server/wolf /wolf/wolf && \
     cp $CMAKE_BUILD_DIR/src/fake-udev/fake-udev /wolf/fake-udev
