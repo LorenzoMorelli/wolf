@@ -1,8 +1,10 @@
 #include "state/sessions.hpp"
 
+#include <array>
 #include <boost/endian/conversion.hpp>
 #include <boost/locale.hpp>
 #include <control/input_handler.hpp>
+#include <cstdint>
 #include <events/events.hpp>
 #include <helpers/logger.hpp>
 #include <immer/box.hpp>
@@ -16,6 +18,29 @@ using namespace wolf::core::input;
 using namespace wolf::core;
 using namespace std::string_literals;
 using namespace moonlight::control;
+
+/**
+ * A MAC address for the virtual DualSense that stays the same for a given client and controller slot.
+ * inputtino would otherwise pick a random one each time the pad is created; Steam keys its controllers
+ * on it, so every session would show up as a brand-new DualSense, and Steam's settings would report
+ * "no controller connected" until the pad is reconnected.
+ */
+static std::string stable_ps5_mac_address(std::size_t session_id, int controller_number) {
+  // FNV-1a, so that the address doesn't change between builds like std::hash could
+  uint64_t hash = 0xcbf29ce484222325;
+  for (auto value : {static_cast<uint64_t>(session_id), static_cast<uint64_t>(controller_number)}) {
+    for (int i = 0; i < 8; i++) {
+      hash ^= (value >> (i * 8)) & 0xFF;
+      hash *= 0x100000001b3;
+    }
+  }
+  std::array<unsigned char, 6> mac = {};
+  for (int i = 0; i < 6; i++) {
+    mac[i] = (hash >> (i * 8)) & 0xFF;
+  }
+  mac[0] = (mac[0] & 0xFC) | 0x02; // locally administered, unicast
+  return fmt::format("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
 std::shared_ptr<events::JoypadTypes> create_new_joypad(const events::StreamSession &session,
                                                        immer::box<std::shared_ptr<ENetPeer>> connected_client,
@@ -122,8 +147,11 @@ std::shared_ptr<events::JoypadTypes> create_new_joypad(const events::StreamSessi
   }
   case wolf::config::ControllerType::PS: {
     logs::log(logs::info, "Creating PS joypad for controller {}", controller_number);
-    auto result = PS5Joypad::create(
-        {.name = "Wolf DualSense (virtual) pad", .vendor_id = 0x054C, .product_id = 0x0CE6, .version = 0x8111});
+    auto result = PS5Joypad::create({.name = "Wolf DualSense (virtual) pad",
+                                     .vendor_id = 0x054C,
+                                     .product_id = 0x0CE6,
+                                     .version = 0x8111,
+                                     .device_uniq = stable_ps5_mac_address(session.session_id, controller_number)});
     if (!result) {
       logs::log(logs::error, "Failed to create PS5 joypad: {}", result.getErrorMessage());
       return {};
