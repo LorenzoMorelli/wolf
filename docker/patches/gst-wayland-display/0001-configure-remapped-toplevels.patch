@@ -1,0 +1,29 @@
+diff --git a/wayland-display-core/src/wayland/handlers/compositor.rs b/wayland-display-core/src/wayland/handlers/compositor.rs
+index 099afe0..dfecc3f 100644
+--- a/wayland-display-core/src/wayland/handlers/compositor.rs
++++ b/wayland-display-core/src/wayland/handlers/compositor.rs
+@@ -107,6 +107,24 @@ impl CompositorHandler for State {
+             .find(|w| w.wl_surface().map(|s| &*s == surface).unwrap_or(false))
+         {
+             window.on_commit();
++
++            // A toplevel unmapped by a NULL buffer must redo the initial configure
++            // sequence before it may attach a buffer again (xdg-shell); smithay resets
++            // initial_configure_sent on unmap, but only pending_windows get configured.
++            if let Some(toplevel) = window.toplevel() {
++                let initial_configure_sent = with_states(surface, |states| {
++                    states
++                        .data_map
++                        .get::<XdgToplevelSurfaceData>()
++                        .unwrap()
++                        .lock()
++                        .unwrap()
++                        .initial_configure_sent
++                });
++                if !initial_configure_sent {
++                    toplevel.send_configure();
++                }
++            }
+         }
+         self.popups.commit(surface);
+ 
