@@ -14,11 +14,15 @@ namespace control {
 using namespace std::chrono_literals;
 using namespace wolf::core;
 
+/**
+ * `timeout` is how long the control thread waits for ENet events, so also how long a packet that another thread
+ * queued with encrypt_and_send() can wait before it's sent.
+ */
 void run_control(int port,
                  const state::SessionsAtoms &running_sessions,
                  const std::shared_ptr<events::EventBusType> &event_bus,
                  int peers = 20,
-                 std::chrono::milliseconds timeout = 1000ms,
+                 std::chrono::milliseconds timeout = 5ms,
                  const std::string &host_ip = "0.0.0.0");
 
 using enet_clients_map = immer::map<ENetPeer *, immer::box<events::StreamSession>>;
