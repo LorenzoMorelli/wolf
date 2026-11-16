@@ -3,8 +3,10 @@
 #include <control/input_handler.hpp>
 #include <events/events.hpp>
 #include <immer/box.hpp>
+#include <mutex>
 #include <state/sessions.hpp>
 #include <sys/socket.h>
+#include <vector>
 
 namespace control {
 
@@ -82,12 +84,38 @@ bool send_packet(std::string_view payload, ENetPeer *peer) {
   return true;
 }
 
+/**
+ * ENet is not thread-safe, but packets are sent from other threads too: the rumble, LED and trigger callbacks of the
+ * virtual pads and event handlers. Sending from there while the control thread services the host can corrupt ENet's
+ * state, so encrypt_and_send() queues the packets and the control thread sends them.
+ */
+struct PendingPacket {
+  std::shared_ptr<ENetPeer> peer;
+  std::string payload;
+};
+
+static std::mutex pending_packets_mutex;
+static std::vector<PendingPacket> pending_packets;
+
+static void send_pending_packets() {
+  std::vector<PendingPacket> packets;
+  {
+    std::lock_guard lock(pending_packets_mutex);
+    packets.swap(pending_packets);
+  }
+  for (const auto &packet : packets) {
+    send_packet(packet.payload, packet.peer.get());
+  }
+}
+
 bool encrypt_and_send(std::string_view payload,
                       std::string_view aes_key,
                       immer::box<std::shared_ptr<ENetPeer>> connected_client) {
-  if (auto enet_client = connected_client->get()) {
+  if (connected_client->get()) {
     auto encrypted = control::encrypt_packet(aes_key, 0, payload); // TODO: seq?
-    return send_packet({(char *)encrypted.get(), encrypted->full_size()}, enet_client);
+    std::lock_guard lock(pending_packets_mutex);
+    pending_packets.push_back({*connected_client, std::string{(char *)encrypted.get(), encrypted->full_size()}});
+    return true;
   } else {
     logs::log(logs::warning, "[ENET] Failed to send packet, client is not connected");
     return false;
@@ -157,6 +185,7 @@ void run_control(int port,
       });
 
   while (true) {
+    send_pending_packets();
     if (enet_host_service(host.get(), &event, timeout.count()) > 0) {
       auto [client_ip, client_port] = get_ip((sockaddr *)&event.peer->address.address);
       auto client_session = get_current_session(connected_clients, running_sessions, client_ip, event);
